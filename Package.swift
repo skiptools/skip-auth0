@@ -17,7 +17,7 @@ let package = Package(
     targets: [
         .target(name: "SkipAuth0", dependencies: [
             .product(name: "SkipFoundation", package: "skip-foundation"),
-            .product(name: "Auth0", package: "Auth0.swift")
+            .product(name: "Auth0", package: "Auth0.swift", condition: .when(platforms: [.macOS, .iOS, .tvOS, .watchOS, .macCatalyst]))
         ], resources: [.process("Resources")], plugins: [.plugin(name: "skipstone", package: "skip")]),
         .testTarget(name: "SkipAuth0Tests", dependencies: [
             "SkipAuth0",

@@ -12,17 +12,16 @@ let logger: Logger = Logger(subsystem: "SkipAuth0", category: "Tests")
 final class SkipAuth0Tests: XCTestCase {
 
     func testSkipAuth0() throws {
-        logger.log("running testSkipAuth0")
-        XCTAssertEqual(1 + 2, 3, "basic test")
+        Auth0SDK.shared.configure(Auth0Config(domain: "https://skip.tools", clientId: "", scheme: ""))
+        if false { // testing compile of API surface only
+            Auth0SDK.shared.login { result in
+                logger.log("login result")
+            }
+            Auth0SDK.shared.logout { result in
+                logger.log("logout result")
+            }
+        }
     }
-
-    func testDecodeType() throws {
-        // load the TestData.json file from the Resources folder and decode it into a struct
-        let resourceURL: URL = try XCTUnwrap(Bundle.module.url(forResource: "TestData", withExtension: "json"))
-        let testData = try JSONDecoder().decode(TestData.self, from: Data(contentsOf: resourceURL))
-        XCTAssertEqual("SkipAuth0", testData.testModuleName)
-    }
-
 }
 
 struct TestData : Codable, Hashable {
