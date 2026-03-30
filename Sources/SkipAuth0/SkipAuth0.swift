@@ -1,12 +1,15 @@
-// Copyright 2023–2026 Skip
+// Copyright 2025–2026 Skip
 // SPDX-License-Identifier: MPL-2.0
+
 #if !SKIP_BRIDGE
 import Foundation
 #if SKIP
 import android.app.Activity
 import android.content.Context
 import com.auth0.android.Auth0
+import com.auth0.android.authentication.AuthenticationAPIClient
 import com.auth0.android.authentication.AuthenticationException
+import com.auth0.android.authentication.storage.SharedPreferencesStorage
 import com.auth0.android.callback.Callback
 import com.auth0.android.provider.WebAuthProvider
 import com.auth0.android.result.Credentials
@@ -14,21 +17,38 @@ import com.auth0.android.result.Credentials
 import Auth0
 #endif
 
-/// Simple cross-platform facade over the Auth0 web auth flow for iOS and Android.
+// MARK: - Auth0SDK
+
+/// Cross-platform facade over the Auth0 authentication SDK for iOS and Android.
 ///
-/// This mirrors the Auth0 quickstarts:
-/// - iOS/macOS: https://auth0.com/docs/quickstart/native/ios-swift
-/// - Android: https://auth0.com/docs/quickstart/native/android
+/// On iOS this wraps the [Auth0.swift](https://github.com/auth0/Auth0.swift) SDK.
+/// On Android this wraps the [Auth0.Android](https://github.com/auth0/Auth0.Android) SDK.
 public final class Auth0SDK {
     nonisolated(unsafe) public static let shared = Auth0SDK()
 
     private var configuration: Auth0Config?
 
+    #if SKIP
+    private var account: com.auth0.android.Auth0?
+    private var authClient: AuthenticationAPIClient?
+    private var credentialsMgr: com.auth0.android.authentication.storage.CredentialsManager?
+    #endif
+
     private init() { }
 
-    /// Configure the Auth0 domain, client id, and redirect scheme.
+    /// Configure the Auth0 domain, client ID, and redirect scheme.
+    ///
+    /// Must be called before any other method. Typically called in your `App.init()`.
     public func configure(_ config: Auth0Config) {
         self.configuration = config
+        #if SKIP
+        let auth0Account = com.auth0.android.Auth0.getInstance(clientId: config.clientId, domain: config.domain)
+        self.account = auth0Account
+        self.authClient = AuthenticationAPIClient(auth0Account)
+        let context = ProcessInfo.processInfo.androidContext
+        let storage = SharedPreferencesStorage(context)
+        self.credentialsMgr = com.auth0.android.authentication.storage.CredentialsManager(authClient!, storage)
+        #endif
     }
 
     /// Returns whether `configure` has been called.
@@ -36,12 +56,14 @@ public final class Auth0SDK {
         configuration != nil
     }
 
-    /// Start an interactive login flow.
-    /// - Parameters:
-    ///   - scope: default `openid profile email offline_access`.
-    ///   - audience: optional API audience.
-    ///   - presenting: platform presenter (UIViewController for iOS, Activity/Context for Android). If omitted on Android we fall back to the process context when available.
-    ///   - completion: receives Auth0 credentials or an error.
+    /// The current Auth0 configuration, or `nil` if not configured.
+    public var config: Auth0Config? {
+        configuration
+    }
+
+    // MARK: Web Auth
+
+    /// Start an interactive login flow using the system browser (Universal Login).
     public func login(scope: String = "openid profile email offline_access",
                       audience: String? = nil,
                       presenting: Any? = nil,
@@ -57,7 +79,7 @@ public final class Auth0SDK {
             return
         }
 
-        let account = Auth0.getInstance(clientId: config.clientId, domain: config.domain)
+        let account = com.auth0.android.Auth0.getInstance(clientId: config.clientId, domain: config.domain)
         var builder = WebAuthProvider.login(account)
             .withScheme(config.scheme)
             .withScope(scope)
@@ -85,11 +107,7 @@ public final class Auth0SDK {
         #endif
     }
 
-    /// Clear the current session.
-    /// - Parameters:
-    ///   - federated: also log out of the identity provider when supported.
-    ///   - presenting: platform presenter (UIViewController for iOS, Activity/Context for Android). If omitted on Android we fall back to the process context when available.
-    ///   - completion: called when the session has been cleared or an error occurs.
+    /// Clear the current session (logout).
     public func logout(federated: Bool = false, presenting: Any? = nil, completion: @escaping (Result<Void, Error>) -> Void) {
         guard let config = configuration else {
             completion(.failure(Auth0Error.notConfigured))
@@ -102,7 +120,7 @@ public final class Auth0SDK {
             return
         }
 
-        let account = Auth0.getInstance(clientId: config.clientId, domain: config.domain)
+        let account = com.auth0.android.Auth0.getInstance(clientId: config.clientId, domain: config.domain)
         var builder = WebAuthProvider.logout(account)
             .withScheme(config.scheme)
         let returnTo = config.logoutReturnTo ?? config.defaultReturnToURL.absoluteString
@@ -127,6 +145,96 @@ public final class Auth0SDK {
         #endif
     }
 
+    // MARK: Authentication API
+
+    /// Log in with email and password (Resource Owner Password Grant).
+    ///
+    /// Requires the "Password" grant type to be enabled in your Auth0 application settings.
+    public func loginWithCredentials(email: String, password: String, scope: String = "openid profile email offline_access", audience: String? = nil, completion: @escaping (Result<Auth0Credentials, Error>) -> Void) {
+        guard let config = configuration else {
+            completion(.failure(Auth0Error.notConfigured))
+            return
+        }
+
+        #if SKIP
+        guard let loginClient = authClient else {
+            completion(.failure(Auth0Error.notConfigured))
+            return
+        }
+        var request = loginClient.login(email, password, "Username-Password-Authentication")
+            .setScope(scope)
+        if let audience {
+            request = request.setAudience(audience)
+        }
+        let loginCallback = Auth0LoginCallback(completion)
+        request.start(loginCallback)
+        #else
+        Auth0.authentication(clientId: config.clientId, domain: config.domain)
+            .login(usernameOrEmail: email, password: password, realmOrConnection: "Username-Password-Authentication", audience: audience, scope: scope)
+            .start { result in
+                switch result {
+                case .success(let credentials):
+                    completion(.success(Auth0Credentials(credentials)))
+                case .failure(let error):
+                    completion(.failure(error))
+                }
+            }
+        #endif
+    }
+
+    /// Renew (refresh) credentials using a refresh token.
+    public func renewCredentials(refreshToken: String, completion: @escaping (Result<Auth0Credentials, Error>) -> Void) {
+        guard let config = configuration else {
+            completion(.failure(Auth0Error.notConfigured))
+            return
+        }
+
+        #if SKIP
+        guard let renewClient = authClient else {
+            completion(.failure(Auth0Error.notConfigured))
+            return
+        }
+        let request = renewClient.renewAuth(refreshToken)
+        let loginCallback = Auth0LoginCallback(completion)
+        request.start(loginCallback)
+        #else
+        Auth0.authentication(clientId: config.clientId, domain: config.domain)
+            .renew(withRefreshToken: refreshToken)
+            .start { result in
+                switch result {
+                case .success(let credentials):
+                    completion(.success(Auth0Credentials(credentials)))
+                case .failure(let error):
+                    completion(.failure(error))
+                }
+            }
+        #endif
+    }
+
+    // MARK: Credentials Manager
+
+    /// Whether stored credentials exist and have not expired (or can be renewed).
+    public var hasValidCredentials: Bool {
+        #if SKIP
+        return credentialsMgr?.hasValidCredentials() ?? false
+        #else
+        guard let config = configuration else { return false }
+        let credentialsManager = Auth0.CredentialsManager(authentication: Auth0.authentication(clientId: config.clientId, domain: config.domain))
+        return credentialsManager.hasValid()
+        #endif
+    }
+
+    /// Clear stored credentials.
+    public func clearCredentials() {
+        #if SKIP
+        credentialsMgr?.clearCredentials()
+        #else
+        guard let config = configuration else { return }
+        let credentialsManager = Auth0.CredentialsManager(authentication: Auth0.authentication(clientId: config.clientId, domain: config.domain))
+        _ = credentialsManager.clear()
+        #endif
+    }
+
     #if SKIP
     func presentingContext(presenting: Any?) -> Context? {
         if let activity = presenting as? Activity {
@@ -142,11 +250,17 @@ public final class Auth0SDK {
     #endif
 }
 
-/// Auth0 configuration shared between platforms.
+// MARK: - Auth0Config
+
+/// Configuration for the Auth0 SDK.
 public struct Auth0Config: Sendable {
+    /// Your Auth0 tenant domain (e.g. `"yourapp.us.auth0.com"`).
     public let domain: String
+    /// The OAuth client ID from your Auth0 application.
     public let clientId: String
+    /// The URL scheme used for Auth0 callbacks (e.g. `"myapp"`).
     public let scheme: String
+    /// Optional custom return-to URL for logout.
     public var logoutReturnTo: String?
 
     public init(domain: String, clientId: String, scheme: String, logoutReturnTo: String? = nil) {
@@ -161,14 +275,32 @@ public struct Auth0Config: Sendable {
     }
 }
 
-/// Normalized credentials container to keep the surface area aligned across platforms.
+// MARK: - Auth0Credentials
+
+/// Cross-platform credentials from an Auth0 authentication flow.
 public struct Auth0Credentials: Sendable {
+    /// The OAuth2 access token.
     public let accessToken: String?
+    /// The OpenID Connect ID token (JWT).
     public let idToken: String?
+    /// The refresh token for obtaining new credentials.
     public let refreshToken: String?
+    /// The token type (typically `"Bearer"`).
     public let tokenType: String?
+    /// When the access token expires.
     public let expiresAt: Date?
+    /// The granted OAuth scopes.
     public let scope: String?
+
+    /// Create credentials with explicit values.
+    public init(accessToken: String? = nil, idToken: String? = nil, refreshToken: String? = nil, tokenType: String? = nil, expiresAt: Date? = nil, scope: String? = nil) {
+        self.accessToken = accessToken
+        self.idToken = idToken
+        self.refreshToken = refreshToken
+        self.tokenType = tokenType
+        self.expiresAt = expiresAt
+        self.scope = scope
+    }
 
     #if SKIP
     init(_ credentials: Credentials) {
@@ -191,10 +323,15 @@ public struct Auth0Credentials: Sendable {
     #endif
 }
 
+// MARK: - Auth0Error
 
+/// Errors that can occur during Auth0 operations.
 public enum Auth0Error: LocalizedError {
+    /// The SDK has not been configured. Call `Auth0SDK.shared.configure(_:)` first.
     case notConfigured
+    /// A platform presenter is required (Activity/Context on Android, UIViewController on iOS).
     case missingPresenter
+    /// The web authentication flow failed with the given message.
     case webAuthFailed(String)
 
     public var errorDescription: String? {
@@ -210,8 +347,9 @@ public enum Auth0Error: LocalizedError {
 }
 
 
+// MARK: - Kotlin Callbacks
+
 #if SKIP
-/// Forward declarations for callback classes
 class Auth0LoginCallback: Callback<Credentials, AuthenticationException> {
     private let completion: (Result<Auth0Credentials, Error>) -> Void
 
