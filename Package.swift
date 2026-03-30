@@ -12,7 +12,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://source.skip.tools/skip.git", from: "1.0.0"),
         .package(url: "https://source.skip.tools/skip-foundation.git", from: "1.0.0"),
-        .package(url: "https://github.com/auth0/Auth0.swift", from: "2.16.0"),
+        .package(url: "https://github.com/auth0/Auth0.swift", from: "2.18.0"),
     ],
     targets: [
         .target(name: "SkipAuth0", dependencies: [
