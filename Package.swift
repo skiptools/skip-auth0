@@ -7,7 +7,7 @@ let package = Package(
     defaultLocalization: "en",
     platforms: [.iOS(.v17), .macOS(.v14)],
     products: [
-        .library(name: "SkipAuth0", type: .dynamic, targets: ["SkipAuth0"]),
+        .library(name: "SkipAuth0", targets: ["SkipAuth0"]),
     ],
     dependencies: [
         .package(url: "https://source.skip.tools/skip.git", from: "1.0.0"),
