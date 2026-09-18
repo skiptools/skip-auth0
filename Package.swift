@@ -10,8 +10,8 @@ let package = Package(
         .library(name: "SkipAuth0", targets: ["SkipAuth0"]),
     ],
     dependencies: [
-        .package(url: "https://source.skip.tools/skip.git", from: "1.0.0"),
-        .package(url: "https://source.skip.tools/skip-foundation.git", from: "1.0.0"),
+        .package(url: "https://github.com/skiptools/skip.git", from: "1.0.0"),
+        .package(url: "https://github.com/skiptools/skip-foundation.git", from: "1.0.0"),
         .package(url: "https://github.com/auth0/Auth0.swift", from: "2.18.0"),
     ],
     targets: [
@@ -26,11 +26,19 @@ let package = Package(
     ]
 )
 
-if Context.environment["SKIP_BRIDGE"] ?? "0" != "0" {
-    package.dependencies += [.package(url: "https://source.skip.tools/skip-bridge.git", "0.0.0"..<"2.0.0")]
+// SKIP_DYNAMIC_LIBRARIES and SKIP_BRIDGE both enforce building as dynamic
+// libraries; SKIP_BRIDGE additionally puts the skipstone plugin in bridge mode
+let bridgeMode = (Context.environment["SKIP_BRIDGE"] ?? "0") != "0"
+let forceDylib = bridgeMode || (Context.environment["SKIP_DYNAMIC_LIBRARIES"] ?? "0") != "0"
+
+if bridgeMode {
+    package.dependencies += [.package(url: "https://github.com/skiptools/skip-bridge.git", "0.0.0"..<"2.0.0")]
     package.targets.forEach({ target in
         target.dependencies += [.product(name: "SkipBridge", package: "skip-bridge")]
     })
+}
+
+if forceDylib {
     // all library types must be dynamic to support bridging
     package.products = package.products.map({ product in
         guard let libraryProduct = product as? Product.Library else { return product }
